@@ -65,13 +65,14 @@ const FRAGMENT_SHADER = [
   "  vec2 screen = (gl_FragCoord.xy - resolution * 0.5) / shortSide;",
   "",
   "  float perspective = max(0.58, 1.0 + screen.y * u_tilt.y * 0.72 - screen.x * u_tilt.x * 0.62);",
-  "  vec2 world = screen / perspective * 1.34;",
+  "  float curvature = 1.0 + dot(screen, screen) * 0.075;",
+  "  vec2 world = screen * curvature / perspective * 1.18;",
   "  world += vec2(screen.y * u_tilt.x, screen.x * u_tilt.y) * 0.22;",
   "  world += u_pan;",
   "  float spin = clamp(u_velocity.x * 0.010, -0.035, 0.035);",
   "  world = mat2(cos(spin), -sin(spin), sin(spin), cos(spin)) * world;",
   "",
-  "  vec2 spacing = vec2(1.13, 0.68);",
+  "  vec2 spacing = vec2(0.98, 0.74);",
   "  float rowId = floor(world.y / spacing.y + 0.5);",
   "  float stagger = positiveMod(rowId, 2.0) * spacing.x * 0.5;",
   "  float columnId = floor((world.x - stagger) / spacing.x + 0.5);",
@@ -80,11 +81,13 @@ const FRAGMENT_SHADER = [
   "  vec2 local = world - center;",
   "",
   "  float random = hash21(cellId + 17.3);",
-  "  vec2 halfSize = vec2(mix(0.505, 0.540, random), mix(0.285, 0.315, hash21(cellId + 63.1)));",
-  "  float radius = mix(0.095, 0.135, hash21(cellId + 4.7));",
+  "  vec2 halfSize = vec2(0.460, 0.345);",
+  "  float radius = 0.108;",
   "  float distanceField = sdRoundBox(local, halfSize, radius);",
   "  float antialias = max(fwidth(distanceField) * 1.5, 0.0015);",
   "  float mask = 1.0 - smoothstep(-antialias, antialias, distanceField);",
+  "  float frameDistance = sdRoundBox(local, halfSize + vec2(0.020), radius + 0.012);",
+  "  float frameMask = 1.0 - smoothstep(-antialias, antialias, frameDistance);",
   "",
   "  vec3 color = vec3(0.011, 0.014, 0.018);",
   "  float ambient = exp(-length(screen - (u_pointer - 0.5) * vec2(0.45, 0.32)) * 1.9);",
@@ -96,6 +99,7 @@ const FRAGMENT_SHADER = [
   "  float backMask = 1.0 - smoothstep(-antialias * 2.0, antialias * 2.0, backDistance);",
   "  vec3 sideColor = mix(vec3(0.04, 0.25, 0.32), vec3(0.34, 0.035, 0.19), smoothstep(-0.2, 0.2, depthShift.x));",
   "  color = mix(color, sideColor * (0.24 + dragEnergy * 0.2), backMask * (1.0 - mask) * 0.9);",
+  "  color = mix(color, vec3(0.004, 0.005, 0.007), frameMask * (1.0 - mask));",
   "",
   "  if (mask > 0.0) {",
   "    vec2 uv = local / (halfSize * 2.0) + 0.5;",
@@ -104,27 +108,37 @@ const FRAGMENT_SHADER = [
   "    float dy = sdRoundBox(local + vec2(0.0, e), halfSize, radius) - sdRoundBox(local - vec2(0.0, e), halfSize, radius);",
   "    vec2 normal = normalize(vec2(dx, dy) + vec2(0.00001));",
   "    float edge = 1.0 - smoothstep(0.0, 0.19, -distanceField);",
+  "    float rim = 1.0 - smoothstep(0.0, 0.055, -distanceField);",
+  "    float thickness = smoothstep(0.0, 0.24, -distanceField);",
   "    float flow = sin(uv.y * 17.0 + uv.x * 9.0 + u_time * 0.72 + random * 9.0) * 0.5 + 0.5;",
-  "    vec2 wave = vec2(sin(uv.y * 21.0 + u_time + random), cos(uv.x * 18.0 - u_time * 0.8)) * 0.0028;",
-  "    vec2 refractOffset = normal * (0.010 + edge * (0.050 + dragEnergy * 0.026));",
+  "    vec2 wave = vec2(sin(uv.y * 21.0 + u_time + random), cos(uv.x * 18.0 - u_time * 0.8)) * 0.0034;",
+  "    float lens = pow(edge, 1.6);",
+  "    vec2 refractOffset = normal * (0.014 + lens * (0.086 + dragEnergy * 0.032));",
   "    refractOffset += wave * (1.0 + dragEnergy * 2.2);",
-  "    refractOffset += u_velocity * 0.00120 * edge;",
+  "    refractOffset += u_velocity * 0.00150 * edge;",
   "",
   "    float index = positiveMod(columnId + rowId * 2.0, 6.0);",
-  "    float dispersion = 0.004 + edge * 0.008 + dragEnergy * 0.003;",
+  "    float dispersion = 0.006 + lens * 0.016 + dragEnergy * 0.004;",
   "    vec3 base;",
   "    base.r = atlasSample(index, uv, refractOffset + normal * dispersion).r;",
   "    base.g = atlasSample(index, uv, refractOffset).g;",
   "    base.b = atlasSample(index, uv, refractOffset - normal * dispersion).b;",
   "",
+  "    vec2 viewDir = normalize(screen - (u_pointer - 0.5) * 2.0 + vec2(0.001));",
+  "    float fresnel = pow(1.0 - thickness, 2.4);",
   "    vec2 lightDirection = normalize((u_pointer - 0.5) * 2.0 - screen + vec2(0.001));",
+  "    vec2 halfVector = normalize(lightDirection - viewDir);",
+  "    float specular = pow(max(dot(normal, halfVector), 0.0), 22.0);",
   "    float facing = pow(max(dot(normal, lightDirection), 0.0), 5.0);",
   "    float opposite = pow(max(dot(-normal, lightDirection), 0.0), 7.0);",
   "    float innerShadow = smoothstep(0.0, 0.10, -distanceField);",
-  "    vec3 glass = base * mix(0.70, 0.98, innerShadow);",
+  "    vec3 tint = mix(vec3(0.82, 0.90, 1.0), vec3(1.0), thickness);",
+  "    vec3 glass = base * tint * mix(0.66, 1.06, innerShadow);",
+  "    glass += vec3(0.55, 0.86, 1.0) * fresnel * (0.30 + dragEnergy * 0.25);",
   "    glass += vec3(0.48, 0.84, 1.0) * facing * edge * (0.34 + dragEnergy * 0.25);",
-  "    glass += vec3(1.0, 0.30, 0.58) * opposite * edge * 0.22;",
-  "    glass += vec3(1.0) * pow(edge, 3.4) * (0.10 + flow * 0.08);",
+  "    glass += vec3(1.0, 0.30, 0.58) * opposite * edge * 0.24;",
+  "    glass += vec3(1.0) * specular * (0.55 + dragEnergy * 0.4);",
+  "    glass += vec3(1.0) * pow(rim, 1.5) * (0.14 + flow * 0.10);",
   "    glass += vec3(0.18, 0.40, 0.48) * edge * 0.10;",
   "    color = mix(color, glass, mask);",
   "  }",
@@ -365,7 +379,7 @@ export default function Home() {
           event.preventDefault();
           const coalesced = event.getCoalescedEvents();
           const samples = coalesced.length > 0 ? coalesced : [event];
-          const scale = 1.34 / Math.max(Math.min(window.innerWidth, window.innerHeight), 1);
+          const scale = 1.18 / Math.max(Math.min(window.innerWidth, window.innerHeight), 1);
 
           for (const sample of samples) {
             const sampleTime = sample.timeStamp || performance.now();
@@ -458,8 +472,8 @@ export default function Home() {
               throwVelocity.y *= throwFriction;
             }
 
-            const springStrength = dragging ? 520 : 390;
-            const springDrag = dragging ? 39 : 33;
+            const springStrength = dragging ? 780 : 400;
+            const springDrag = dragging ? 52 : 33;
             springVelocity.x += (targetPan.x - pan.x) * springStrength * step;
             springVelocity.y += (targetPan.y - pan.y) * springStrength * step;
             const springDamping = Math.exp(-springDrag * step);
