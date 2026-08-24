@@ -1,0 +1,40 @@
+# 依赖
+node_modules/
+.pnp
+.pnp.*
+
+# 构建产物
+dist/
+build/dist/
+.next/
+out/
+*.tsbuildinfo
+next-env.d.ts
+
+# Cloudflare / Wrangler / Miniflare 运行时
+.wrangler/
+.sites-runtime/
+.dev.vars
+
+# 环境变量与本地密钥
+.env
+.env.*
+!.env.example
+.openai/hosting.json
+
+# 日志
+*.log
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# 测试与覆盖率
+coverage/
+
+# 编辑器 / 操作系统
+.DS_Store
+.idea/
+.vscode/
+*.swp
+Thumbs.db
