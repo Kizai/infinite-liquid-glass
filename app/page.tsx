@@ -1,15 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-
-const PROJECTS = [
-  ["ILG–01", "URBAN SYSTEMS", "Infinite City", "A city, endlessly becoming."],
-  ["ILG–02", "LIVING STRUCTURES", "Glass House", "Transparency as a way of living."],
-  ["ILG–03", "ACOUSTIC SPACE", "Echo Chamber", "Rooms that remember every note."],
-  ["ILG–04", "ORGANIC FUTURES", "Forest Portal", "A threshold into another rhythm."],
-  ["ILG–05", "SPATIAL IDENTITY", "Elsewhere", "A place just beyond the familiar."],
-  ["ILG–06", "CULTURAL PLATFORM", "Common Sky", "One horizon, many points of view."],
-];
+import { DEFAULT_TEXT, type Slide, type SlideText } from "./lib/gallery";
 
 const VERTEX_SHADER = [
   "#version 300 es",
@@ -32,6 +24,9 @@ const FRAGMENT_SHADER = [
   "uniform float u_time;",
   "uniform float u_dragging;",
   "uniform sampler2D u_atlas;",
+  "uniform float u_atlasCols;",
+  "uniform float u_atlasRows;",
+  "uniform float u_count;",
   "in vec2 v_uv;",
   "out vec4 outColor;",
   "",
@@ -51,11 +46,12 @@ const FRAGMENT_SHADER = [
   "}",
   "",
   "vec3 atlasSample(float index, vec2 uv, vec2 offset) {",
-  "  float safeIndex = positiveMod(index, 6.0);",
-  "  float column = positiveMod(safeIndex, 3.0);",
-  "  float row = floor(safeIndex / 3.0);",
+  "  float count = max(u_count, 1.0);",
+  "  float safeIndex = positiveMod(index, count);",
+  "  float column = positiveMod(safeIndex, u_atlasCols);",
+  "  float row = floor(safeIndex / u_atlasCols);",
   "  vec2 sampleUv = clamp(uv + offset, vec2(0.008), vec2(0.992));",
-  "  vec2 atlasUv = (vec2(column, row) + vec2(sampleUv.x, 1.0 - sampleUv.y)) / vec2(3.0, 2.0);",
+  "  vec2 atlasUv = (vec2(column, row) + vec2(sampleUv.x, 1.0 - sampleUv.y)) / vec2(u_atlasCols, u_atlasRows);",
   "  return texture(u_atlas, atlasUv).rgb;",
   "}",
   "",
@@ -107,39 +103,47 @@ const FRAGMENT_SHADER = [
   "    float dx = sdRoundBox(local + vec2(e, 0.0), halfSize, radius) - sdRoundBox(local - vec2(e, 0.0), halfSize, radius);",
   "    float dy = sdRoundBox(local + vec2(0.0, e), halfSize, radius) - sdRoundBox(local - vec2(0.0, e), halfSize, radius);",
   "    vec2 normal = normalize(vec2(dx, dy) + vec2(0.00001));",
-  "    float edge = 1.0 - smoothstep(0.0, 0.19, -distanceField);",
-  "    float rim = 1.0 - smoothstep(0.0, 0.055, -distanceField);",
-  "    float thickness = smoothstep(0.0, 0.24, -distanceField);",
-  "    float flow = sin(uv.y * 17.0 + uv.x * 9.0 + u_time * 0.72 + random * 9.0) * 0.5 + 0.5;",
-  "    vec2 wave = vec2(sin(uv.y * 21.0 + u_time + random), cos(uv.x * 18.0 - u_time * 0.8)) * 0.0034;",
-  "    float lens = pow(edge, 1.6);",
-  "    vec2 refractOffset = normal * (0.014 + lens * (0.086 + dragEnergy * 0.032));",
-  "    refractOffset += wave * (1.0 + dragEnergy * 2.2);",
-  "    refractOffset += u_velocity * 0.00150 * edge;",
+  "    float inner = -distanceField;",
+  "    float edge = 1.0 - smoothstep(0.0, 0.19, inner);",
+  "    float rim = 1.0 - smoothstep(0.0, 0.055, inner);",
+  "    float thickness = smoothstep(0.0, 0.24, inner);",
+  "    float flow = sin(uv.y * 14.0 + uv.x * 8.0 + u_time * 0.6 + random * 9.0) * 0.5 + 0.5;",
+  "    vec2 wave = vec2(sin(uv.y * 16.0 + u_time * 0.8 + random), cos(uv.x * 14.0 - u_time * 0.7)) * 0.0024;",
+  "    // Convex meniscus: the surface domes up like a glass filled to the brim.",
+  "    float dome = smoothstep(0.0, 0.30, inner);",
+  "    dome = 1.0 - pow(1.0 - dome, 2.4);",
+  "    vec2 centered = uv - 0.5;",
+  "    float magnify = 1.0 - dome * 0.06;",
+  "    vec2 lensUv = 0.5 + centered * magnify;",
+  "    float meniscus = pow(edge, 1.6);",
+  "    // Refraction is concentrated at the rounded rim; the centre stays clear.",
+  "    vec2 refractOffset = normal * (0.0015 + meniscus * (0.074 + dragEnergy * 0.026));",
+  "    refractOffset += wave * (0.4 + dragEnergy * 1.3) * meniscus;",
+  "    refractOffset += u_velocity * 0.00100 * edge;",
   "",
-  "    float index = positiveMod(columnId + rowId * 2.0, 6.0);",
-  "    float dispersion = 0.006 + lens * 0.016 + dragEnergy * 0.004;",
+  "    float index = positiveMod(columnId + rowId * 2.0, u_count);",
+  "    // Whisper of chromatic separation so it still reads as glass, not a prism.",
+  "    float dispersion = meniscus * meniscus * 0.0044;",
   "    vec3 base;",
-  "    base.r = atlasSample(index, uv, refractOffset + normal * dispersion).r;",
-  "    base.g = atlasSample(index, uv, refractOffset).g;",
-  "    base.b = atlasSample(index, uv, refractOffset - normal * dispersion).b;",
+  "    base.r = atlasSample(index, lensUv, refractOffset + normal * dispersion).r;",
+  "    base.g = atlasSample(index, lensUv, refractOffset).g;",
+  "    base.b = atlasSample(index, lensUv, refractOffset - normal * dispersion).b;",
   "",
   "    vec2 viewDir = normalize(screen - (u_pointer - 0.5) * 2.0 + vec2(0.001));",
-  "    float fresnel = pow(1.0 - thickness, 2.4);",
+  "    float fresnel = pow(1.0 - thickness, 2.2);",
   "    vec2 lightDirection = normalize((u_pointer - 0.5) * 2.0 - screen + vec2(0.001));",
   "    vec2 halfVector = normalize(lightDirection - viewDir);",
-  "    float specular = pow(max(dot(normal, halfVector), 0.0), 22.0);",
-  "    float facing = pow(max(dot(normal, lightDirection), 0.0), 5.0);",
-  "    float opposite = pow(max(dot(-normal, lightDirection), 0.0), 7.0);",
-  "    float innerShadow = smoothstep(0.0, 0.10, -distanceField);",
-  "    vec3 tint = mix(vec3(0.82, 0.90, 1.0), vec3(1.0), thickness);",
-  "    vec3 glass = base * tint * mix(0.66, 1.06, innerShadow);",
-  "    glass += vec3(0.55, 0.86, 1.0) * fresnel * (0.30 + dragEnergy * 0.25);",
-  "    glass += vec3(0.48, 0.84, 1.0) * facing * edge * (0.34 + dragEnergy * 0.25);",
-  "    glass += vec3(1.0, 0.30, 0.58) * opposite * edge * 0.24;",
-  "    glass += vec3(1.0) * specular * (0.55 + dragEnergy * 0.4);",
-  "    glass += vec3(1.0) * pow(rim, 1.5) * (0.14 + flow * 0.10);",
-  "    glass += vec3(0.18, 0.40, 0.48) * edge * 0.10;",
+  "    float specular = pow(max(dot(normal, halfVector), 0.0), 18.0) * meniscus;",
+  "    float facing = pow(max(dot(normal, lightDirection), 0.0), 4.0);",
+  "    float innerShadow = smoothstep(0.0, 0.12, inner);",
+  "    vec3 tint = mix(vec3(0.86, 0.92, 1.0), vec3(1.0), thickness);",
+  "    vec3 glass = base * tint * mix(0.72, 1.05, innerShadow);",
+  "    // Soft water-surface sheen: rounded rim light + a single gentle specular.",
+  "    glass += vec3(0.60, 0.82, 1.0) * fresnel * (0.18 + dragEnergy * 0.16);",
+  "    glass += vec3(0.70, 0.90, 1.0) * facing * edge * (0.16 + dragEnergy * 0.14);",
+  "    glass += vec3(1.0) * specular * (0.55 + dragEnergy * 0.3);",
+  "    glass += vec3(1.0) * pow(rim, 1.8) * (0.09 + flow * 0.05);",
+  "    glass += vec3(0.14, 0.30, 0.40) * edge * 0.06;",
   "    color = mix(color, glass, mask);",
   "  }",
   "",
@@ -155,6 +159,19 @@ const FRAGMENT_SHADER = [
   "  outColor = vec4(color, 1.0);",
   "}",
 ].join("\n");
+
+// Media on the image host is fetched through the same-origin proxy so WebGL can
+// sample it into a canvas without cross-origin tainting. Local assets pass
+// through untouched.
+const mediaEndpoint = (url: string) =>
+  url.startsWith("/") ? url : "/api/media?u=" + encodeURIComponent(url);
+
+interface VideoCell {
+  col: number;
+  row: number;
+  video: HTMLVideoElement;
+  text: SlideText;
+}
 
 function StudioMark() {
   return (
@@ -186,42 +203,187 @@ function createShader(
   return shader;
 }
 
-function buildAtlas(image: HTMLImageElement) {
+function loadImage(src: string): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    image.decoding = "async";
+    image.onload = () => resolve(image);
+    image.onerror = () => reject(new Error("Unable to load media: " + src));
+    image.src = src;
+  });
+}
+
+function loadVideo(src: string): Promise<HTMLVideoElement> {
+  return new Promise((resolve, reject) => {
+    const video = document.createElement("video");
+    video.muted = true;
+    video.loop = true;
+    video.playsInline = true;
+    video.autoplay = true;
+    video.preload = "auto";
+    video.onloadeddata = () => resolve(video);
+    video.onerror = () => reject(new Error("Unable to load video: " + src));
+    video.src = src;
+  });
+}
+
+// Card aspect in the shader (halfSize.x / halfSize.y = 0.460 / 0.345 = 4:3).
+const CARD_ASPECT = 0.46 / 0.345;
+
+// Cover-crop any image/video to the card's 4:3 aspect, then draw it into the
+// square atlas cell. The shader stretches that square cell back onto the 4:3
+// card, so the visible result is a clean 4:3 cover crop — no distortion or
+// overflow regardless of the source's own aspect ratio.
+function drawCover(
+  ctx: CanvasRenderingContext2D,
+  media: CanvasImageSource,
+  ox: number,
+  oy: number,
+  size: number,
+) {
+  const mediaWidth =
+    (media as HTMLVideoElement).videoWidth ||
+    (media as HTMLImageElement).naturalWidth ||
+    size;
+  const mediaHeight =
+    (media as HTMLVideoElement).videoHeight ||
+    (media as HTMLImageElement).naturalHeight ||
+    size;
+  const srcAspect = mediaWidth / mediaHeight;
+  let sx: number;
+  let sy: number;
+  let sw: number;
+  let sh: number;
+  if (srcAspect > CARD_ASPECT) {
+    // Source is wider than 4:3 — crop the sides.
+    sh = mediaHeight;
+    sw = mediaHeight * CARD_ASPECT;
+    sx = (mediaWidth - sw) / 2;
+    sy = 0;
+  } else {
+    // Source is taller than 4:3 — crop top and bottom.
+    sw = mediaWidth;
+    sh = mediaWidth / CARD_ASPECT;
+    sx = 0;
+    sy = (mediaHeight - sh) / 2;
+  }
+  ctx.drawImage(media, sx, sy, sw, sh, ox, oy, size, size);
+}
+
+// Gradient scrim + project labels, matching the original mural overlay.
+function drawOverlay(
+  ctx: CanvasRenderingContext2D,
+  ox: number,
+  oy: number,
+  text: SlideText,
+) {
+  const gradient = ctx.createLinearGradient(0, oy + 205, 0, oy + 512);
+  gradient.addColorStop(0, "rgba(2,4,8,0)");
+  gradient.addColorStop(0.52, "rgba(2,4,8,0.22)");
+  gradient.addColorStop(1, "rgba(2,4,8,0.84)");
+  ctx.fillStyle = gradient;
+  ctx.fillRect(ox, oy, 512, 512);
+
+  ctx.textBaseline = "top";
+  ctx.fillStyle = "rgba(255,255,255,0.75)";
+  ctx.font = "500 12px ui-monospace, SFMono-Regular, Menlo, monospace";
+  ctx.textAlign = "left";
+  ctx.fillText(text.code, ox + 36, oy + 32);
+  ctx.textAlign = "right";
+  ctx.fillText(text.category, ox + 476, oy + 32);
+  ctx.textAlign = "left";
+
+  ctx.fillStyle = "#ffffff";
+  ctx.font = "600 55px Arial, Helvetica, sans-serif";
+  ctx.fillText(text.title, ox + 34, oy + 378);
+  ctx.fillStyle = "rgba(255,255,255,0.72)";
+  ctx.font = "400 15px Arial, Helvetica, sans-serif";
+  ctx.fillText(text.subtitle, ox + 37, oy + 451);
+}
+
+// Default visual: the bundled six-cell mural.
+function buildMuralAtlas(image: HTMLImageElement) {
   const canvas = document.createElement("canvas");
   canvas.width = 1536;
   canvas.height = 1024;
-  const context = canvas.getContext("2d");
-  if (!context) return canvas;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return canvas;
 
-  context.drawImage(image, 0, 0, canvas.width, canvas.height);
-  PROJECTS.forEach((project, index) => {
-    const column = index % 3;
-    const row = Math.floor(index / 3);
-    const x = column * 512;
-    const y = row * 512;
-    const gradient = context.createLinearGradient(0, y + 205, 0, y + 512);
-    gradient.addColorStop(0, "rgba(2,4,8,0)");
-    gradient.addColorStop(0.52, "rgba(2,4,8,0.22)");
-    gradient.addColorStop(1, "rgba(2,4,8,0.84)");
-    context.fillStyle = gradient;
-    context.fillRect(x, y, 512, 512);
-
-    context.textBaseline = "top";
-    context.fillStyle = "rgba(255,255,255,0.75)";
-    context.font = "500 12px ui-monospace, SFMono-Regular, Menlo, monospace";
-    context.fillText(project[0], x + 36, y + 32);
-    context.textAlign = "right";
-    context.fillText(project[1], x + 476, y + 32);
-    context.textAlign = "left";
-
-    context.fillStyle = "#ffffff";
-    context.font = "600 55px Arial, Helvetica, sans-serif";
-    context.fillText(project[2], x + 34, y + 378);
-    context.fillStyle = "rgba(255,255,255,0.72)";
-    context.font = "400 15px Arial, Helvetica, sans-serif";
-    context.fillText(project[3], x + 37, y + 451);
+  ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
+  DEFAULT_TEXT.forEach((text, index) => {
+    drawOverlay(ctx, (index % 3) * 512, Math.floor(index / 3) * 512, text);
   });
   return canvas;
+}
+
+// Choose a near-square atlas grid that can hold every slide.
+function atlasGrid(count: number) {
+  const cols = Math.max(1, Math.ceil(Math.sqrt(count)));
+  const rows = Math.max(1, Math.ceil(count / cols));
+  return { cols, rows };
+}
+
+// Config-driven visual: composite each slide's media into its atlas cell.
+// The grid grows to fit any number of slides; videos are recorded as cells so
+// the render loop can refresh them per frame.
+async function buildDynamicAtlas(slides: Slide[]) {
+  const { cols, rows } = atlasGrid(slides.length);
+  const cell = 512;
+  const canvas = document.createElement("canvas");
+  canvas.width = cols * cell;
+  canvas.height = rows * cell;
+  const ctx = canvas.getContext("2d");
+  const videoCells: VideoCell[] = [];
+  const count = slides.length;
+  if (!ctx) return { canvas, videoCells, cols, rows, count };
+
+  ctx.fillStyle = "#050607";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  for (let index = 0; index < slides.length; index++) {
+    const slide = slides[index];
+    const col = index % cols;
+    const row = Math.floor(index / cols);
+    const ox = col * cell;
+    const oy = row * cell;
+    const text: SlideText = {
+      code: slide.code,
+      category: slide.category,
+      title: slide.title,
+      subtitle: slide.subtitle,
+    };
+    try {
+      if (slide.mediaType === "video" && slide.mediaUrl) {
+        const video = await loadVideo(mediaEndpoint(slide.mediaUrl));
+        void video.play().catch(() => {});
+        drawCover(ctx, video, ox, oy, cell);
+        videoCells.push({ col, row, video, text });
+      } else if (slide.mediaUrl) {
+        const image = await loadImage(mediaEndpoint(slide.mediaUrl));
+        drawCover(ctx, image, ox, oy, cell);
+      }
+    } catch {
+      // Leave the cell dark if a single media item fails to load.
+    }
+    drawOverlay(ctx, ox, oy, text);
+  }
+  return { canvas, videoCells, cols, rows, count };
+}
+
+async function loadSlides(): Promise<Slide[]> {
+  try {
+    const res = await fetch("/api/config", { cache: "no-store" });
+    if (!res.ok) return [];
+    const data = await res.json();
+    if (data && Array.isArray(data.slides)) {
+      return (data.slides as Slide[]).filter(
+        (slide) => slide && typeof slide.mediaUrl === "string",
+      );
+    }
+  } catch {
+    // fall back to the bundled mural
+  }
+  return [];
 }
 
 export default function Home() {
@@ -277,22 +439,43 @@ export default function Home() {
         gl.enableVertexAttribArray(positionLocation);
         gl.vertexAttribPointer(positionLocation, 2, gl.FLOAT, false, 0, 0);
 
-        const image = new Image();
-        image.decoding = "async";
-        image.src = "/liquid-glass-mural.webp";
-        await new Promise<void>((resolve, reject) => {
-          image.onload = () => resolve();
-          image.onerror = () => reject(new Error("Unable to load the visual atlas."));
-        });
+        if (progressRef.current) progressRef.current.style.transform = "scaleX(.62)";
+        // Cap by the GPU's texture budget: at 512px cells a near-square grid
+        // stays within MAX_TEXTURE_SIZE (e.g. 8x8 = 64 slots on a 4096 limit).
+        const maxTex = (gl.getParameter(gl.MAX_TEXTURE_SIZE) as number) || 4096;
+        const maxCount = Math.max(1, Math.floor(maxTex / 512)) ** 2;
+        const slides = (await loadSlides()).slice(0, maxCount);
         if (disposed) return;
-        if (progressRef.current) progressRef.current.style.transform = "scaleX(.78)";
 
-        const atlas = buildAtlas(image);
+        let videoCells: VideoCell[] = [];
+        let atlasCanvas: HTMLCanvasElement;
+        let atlasCols = 3;
+        let atlasRows = 2;
+        let atlasCount = 6;
+        if (slides.length > 0 && slides.some((slide) => slide.mediaUrl)) {
+          const built = await buildDynamicAtlas(slides);
+          atlasCanvas = built.canvas;
+          videoCells = built.videoCells;
+          atlasCols = built.cols;
+          atlasRows = built.rows;
+          atlasCount = built.count;
+        } else {
+          const image = await loadImage("/liquid-glass-mural.webp");
+          atlasCanvas = buildMuralAtlas(image);
+        }
+        if (disposed) return;
+        if (progressRef.current) progressRef.current.style.transform = "scaleX(.82)";
+
+        const hasVideo = videoCells.length > 0;
         const texture = gl.createTexture();
         gl.activeTexture(gl.TEXTURE0);
         gl.bindTexture(gl.TEXTURE_2D, texture);
         gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, 0);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
+        gl.texParameteri(
+          gl.TEXTURE_2D,
+          gl.TEXTURE_MIN_FILTER,
+          hasVideo ? gl.LINEAR : gl.LINEAR_MIPMAP_LINEAR,
+        );
         gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
         gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
         gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
@@ -302,11 +485,20 @@ export default function Home() {
           gl.RGBA,
           gl.RGBA,
           gl.UNSIGNED_BYTE,
-          atlas,
+          atlasCanvas,
         );
-        gl.generateMipmap(gl.TEXTURE_2D);
+        if (!hasVideo) gl.generateMipmap(gl.TEXTURE_2D);
         gl.useProgram(program);
         gl.uniform1i(gl.getUniformLocation(program, "u_atlas"), 0);
+        gl.uniform1f(gl.getUniformLocation(program, "u_atlasCols"), atlasCols);
+        gl.uniform1f(gl.getUniformLocation(program, "u_atlasRows"), atlasRows);
+        gl.uniform1f(gl.getUniformLocation(program, "u_count"), atlasCount);
+
+        // Scratch canvas for per-frame video cell uploads.
+        const videoScratch = document.createElement("canvas");
+        videoScratch.width = 512;
+        videoScratch.height = 512;
+        const videoScratchCtx = videoScratch.getContext("2d");
 
         const resolutionLocation = gl.getUniformLocation(program, "u_resolution");
         const panLocation = gl.getUniformLocation(program, "u_pan");
@@ -512,6 +704,26 @@ export default function Home() {
             targetPan.y -= offset;
           }
 
+          // Refresh any video cells into their atlas region.
+          if (videoCells.length > 0 && videoScratchCtx) {
+            gl.bindTexture(gl.TEXTURE_2D, texture);
+            for (const cell of videoCells) {
+              if (cell.video.readyState < 2) continue;
+              videoScratchCtx.clearRect(0, 0, 512, 512);
+              drawCover(videoScratchCtx, cell.video, 0, 0, 512);
+              drawOverlay(videoScratchCtx, 0, 0, cell.text);
+              gl.texSubImage2D(
+                gl.TEXTURE_2D,
+                0,
+                cell.col * 512,
+                cell.row * 512,
+                gl.RGBA,
+                gl.UNSIGNED_BYTE,
+                videoScratch,
+              );
+            }
+          }
+
           gl.useProgram(program);
           gl.bindVertexArray(vao);
           gl.uniform2f(resolutionLocation, canvas.width, canvas.height);
@@ -539,6 +751,11 @@ export default function Home() {
           main.removeEventListener("pointercancel", releasePointer);
           main.removeEventListener("wheel", onWheel);
           main.removeEventListener("keydown", onKeyDown);
+          for (const cell of videoCells) {
+            cell.video.pause();
+            cell.video.removeAttribute("src");
+            cell.video.load();
+          }
           gl.deleteTexture(texture);
           gl.deleteBuffer(positions);
           gl.deleteVertexArray(vao);
